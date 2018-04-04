@@ -65,7 +65,8 @@ p_student_dems <- c("d_gender_f", "d_ell_y", "d_sped_y", "d_frl_y",
 p_avg_method <- "bdrops"
 
 # choose doseage threshold (drops all student-teacher links with < X percent dose)
-p_doseage_threshold <- .5
+# DON'T NEED THIS
+#p_doseage_threshold <- .5
 
 #====================#
 # ==== load data ====
@@ -128,11 +129,12 @@ all_models <- names(split_model_xwalk)
 #========================================#
 
 # go inside function
-psm_input_xwalk       <- split_model_xwalk[["nys_math_grade_07_2017_spring_both_pre"]]
+psm_input_xwalk       <- split_model_xwalk[["nys_math_grade_07_2016_spring_both_pre"]]
 psm_link_weight       <- in_link_weight
 psm_student_dems      <- p_student_dems
 psm_relay_info        <- relay_info
-psm_doseage_threshold <- p_doseage_threshold
+
+#psm_doseage_threshold <- p_doseage_threshold
 psm_avg_method        <- p_avg_method
 psm_dir_in            <- p_dir_in
 psm_dir_out           <- p_dir_out
@@ -144,7 +146,7 @@ create_psm_input_sets <- function(psm_input_xwalk,
                                   psm_link_weight,
                                   psm_student_dems,
                                   psm_relay_info,
-                                  psm_doseage_threshold,
+                                  #psm_doseage_threshold,
                                   psm_avg_method,
                                   psm_dir_in,
                                   psm_dir_out,
@@ -296,17 +298,45 @@ create_psm_input_sets <- function(psm_input_xwalk,
   
   # flag any student that has both relay and non-relay
   student_w_link[, flag_heterogeneous_teachers := ifelse(num_relay_teachers>0 & num_non_relay_teachers>0, 1, 0)]
+  # flag any student that has both relay and non-relay
+  student_w_link[, flag_threeplus_teachers := ifelse(num_relay_teachers>2 | num_non_relay_teachers>2, 1, 0)]
   
+  # drop teachers missing weight threshold
+  link_adrops <- ea_subset(student_w_link, num_relay_teachers>0 & num_non_relay_teachers>0, opt_print = 0)
+  
+  
+  
+  #QC - Co-teacher relay vs non-relay in "cells" based on teacher experience
+  two_relay <- subset(student_w_link, num_relay_teachers>1 & flag_heterogeneous_teachers == 0 & flag_threeplus_teachers == 0)
+  
+  setorder(two_relay, ea_exp_level)
+  
+  # identify teacher 1 and teacher 2
+  two_relay[, teach_num := paste0("teacher_num_", 1:.N), "ea_student_id"]
+  
+  # cast
+  ztest <-  dcast.data.table(two_relay, ea_student_id ~ teach_num, value.var = "ea_exp_level")
+  
+  
+  
+  # identify teacher with max experience
+  two_relay[, max_exp_yrs := max(ea_exp_level), by = c("ea_student_id")]
+  
+
+  dcast(two_relay, ea_student_id ~ teacher_id, value.var="ea_exp_level")
+  su
+  two_non_relay <- subset(student_w_link, num_non_relay_teachers>1 & flag_heterogeneous_teachers == 0 & flag_threeplus_teachers == 0)
+
   
   #QC - How much does this increse sample size of relay students?
   #look at students flagged and students with multiple teachers that are kept
-  flag_test <- subset(student_w_link, flag_heterogeneous_teachers == 1)
+  #flag_test <- subset(student_w_link, flag_heterogeneous_teachers == 1)
   
-  multiple_relay <- subset(student_w_link, num_relay_teachers>1 & flag_heterogeneous_teachers == 0)
+  #multiple_relay <- subset(student_w_link, num_relay_teachers>1 & flag_heterogeneous_teachers == 0)
   #count unique relay students that have mutiple relay teachers
-  count_relay <- subset(multiple_relay, select = c(ea_student_id) )
-  multiple_non_relay <- subset(student_w_link, num_non_relay_teachers>1 & flag_heterogeneous_teachers == 0)
-  length(unique(count_relay))
+  #count_relay <- subset(multiple_relay, select = c(ea_student_id) )
+  #multiple_non_relay <- subset(student_w_link, num_non_relay_teachers>1 & flag_heterogeneous_teachers == 0)
+  #length(unique(count_relay))
 
   
   #=======================================#
@@ -317,6 +347,7 @@ create_psm_input_sets <- function(psm_input_xwalk,
   out_data <- ea_merge(x_controls, link_adrops, "ea_student_id", "both", opt_print = 0)
   
   # drop weight
+  #DO WE WANT TO DO THIS??????? May want to keep these for co-teaching
   out_data[, weight                 := NULL]
   out_data[, flag_heterogeneous_teachers   := NULL]
   
@@ -367,7 +398,7 @@ create_psm_input_sets <- function(psm_input_xwalk,
   # ==== ~~ adrops ====
   #====================#
   
-  # parameter: calculate averages AFTER dropping students because of low doseage
+  # parameter: calculate averages AFTER dropping students because of HETEROGENEOUS CO-TEACHERS
   if(psm_avg_method == "adrops"){
     
     # get averages
@@ -469,7 +500,7 @@ if(p_opt_parallel){
                                              MoreArgs        = list(psm_link_weight       = in_link_weight,
                                                                     psm_student_dems      = p_student_dems,
                                                                     psm_relay_info        = relay_info,
-                                                                    psm_doseage_threshold = p_doseage_threshold,
+                                                                    #psm_doseage_threshold = p_doseage_threshold,
                                                                     psm_avg_method        = p_avg_method,
                                                                     psm_dir_in            = p_dir_in,
                                                                     psm_dir_out           = p_dir_out,
@@ -508,18 +539,19 @@ extracted_data <- ea_extract(out_psm_input_set_qc)
 # save dataset to perfrom more qc checks on
 out_linkage_and_weights <- copy(extracted_data$qc_doseage_dataset)
 
+
 #============================#
 # ==== export stacked qc ====
 #============================#
 
 # check toggl
-if(p_opt_exp){
+#if(p_opt_exp){
   
   # save input set
-  ea_save(in_data          = out_linkage_and_weights,
-          in_val_path      = p_dir_out_qc,
-          in_val_file      = "out_linkage_and_weights.csv",
-          in_val_timestamp = p_timestamp)
-}
+#  ea_save(in_data          = out_linkage_and_weights,
+#          in_val_path      = p_dir_out_qc,
+#          in_val_file      = "out_linkage_and_weights.csv",
+#          in_val_timestamp = p_timestamp)
+#}
 
 
