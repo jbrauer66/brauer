@@ -74,7 +74,7 @@ long_link <- rbind(long_link_no_end_dup, sub_end_dups, use.names = TRUE)
 
 
 #========================================#
-# ==== ~ check for overlapping links ====
+# ==== Push together student-teacher obs==
 #========================================#
 
 # subset remaining repeated entries by teach/stud/subj/year
@@ -85,29 +85,53 @@ long_link_no_dup <- ea_no_dups(long_link, c("ea_student_id", "teacher_id", "link
 
 # find min start, max end, and sum length
 still_dups[, ':='(min_start = min(as.Date(student_teacher_rel_start)),
-                  max_end = max(as.Date(student_teacher_rel_end)),
-                  sum_diff_links = sum(link_length)),
+                  max_end = max(as.Date(student_teacher_rel_end))),
+                  #sum_diff_links = sum(link_length)),
            by = c("ea_student_id", "teacher_id", "link_school_year", "ea_course_subject")]
 
 # calc length from min to max
 still_dups[, min_max_link_length := max_end - min_start + 1]
 
+# drop dups by c("ea_student_id", "link_school_year", "ea_course_subject") and retain only min_start max_end min_max_link_length
+student_teacher_unique <- ea_no_dups(still_dups,  c("ea_student_id", "teacher_id", "link_school_year", "ea_course_subject"))
+
+#========================================#
+# ==== Check for overlapping co-teaching==
+#========================================#
+
+# find min start, max end, and sum length for each student
+student_teacher_unique[, ':='(min_start_student = min(as.Date(min_start)),
+                  max_end_student = max(as.Date(max_end)),
+                  sum_diff_links = sum(min_max_link_length)),
+           by = c("ea_student_id", "link_school_year", "ea_course_subject")]
+
+# calc length from min to max
+student_teacher_unique[, min_max_link_length_student := max_end_student - min_start_student + 1]
+
+
 # indicate if min_max length != sum unique links
-still_dups[, flag_overlap := ifelse(min_max_link_length < sum_diff_links, 1, 0)]
+student_teacher_unique[, flag_overlap := ifelse(min_max_link_length_student < sum_diff_links, 1, 0)]
 
 # count the number of days overlapping
-still_dups[, days_overlap := sum_diff_links-min_max_link_length]
+student_teacher_unique[, days_overlap := sum_diff_links-min_max_link_length_student]
 
 # ratio number of days overlapping by the min
-still_dups[, ratio_overlap := days_overlap / as.numeric(min_max_link_length)]
+student_teacher_unique[, ratio_overlap := ifelse(days_overlap>=0, days_overlap / as.numeric(min_max_link_length_student),0)]
+
+# qc table to check different types of co-teaching
+ea_table(student_teacher_unique,c("ratio_overlap"),opt_percent=1)
 
 
 
-test_overlap <- ea_subset(still_dups, flag_overlap==1)
+#========================================#
+# ==== Check for overlapping co-teaching==
+#========================================#
 
-test_length <- ea_subset(test_overlap, ratio_overlap>.5)
 
-test_one_day_overlap <- ea_subset(test_overlap, days_overlap==1)
+
+
+
+
 
 
 
@@ -119,6 +143,13 @@ teacher_relay_exp <- subset(in_relay_xwalk_subset, select = c("teacher_id", "rel
 still_dups_merge <- ea_merge(in_data_x = still_dups, in_data_y = teacher_relay_exp, in_vars_by = "teacher_id", opt_merge_type = "both")
 
 
-# GET SOME NUMBERS OF STUDENTS 
+# FOR EACH STUDENT, reshape to get relay_1 relay_2 exp_1 exp_2 variabels for each co-teacher and categorize them and then count
+still_dups_merge <- still_dups_merge[order(ea_student_id,relay_flag,ea_exp_level),]
 
 
+#setorder(still_dups_merge, ea_exp_level)
+still_dups_merge[, teach_num := paste0("teacher_num_", 1:.N), "ea_student_id"]
+ztest <-  dcast.data.table(two_relay, ea_student_id ~ teach_num, value.var = "ea_exp_level")
+
+
+ea_table(still_dups_merge,in_vars_table=c("relay_flag", "ea_exp_level"))
